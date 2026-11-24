@@ -49,7 +49,9 @@
 
 <body>
 
-    <div id="status">Starting camera...</div>
+    <button id="startButton">START AR</button>
+
+    <div id="status">Press START AR</div>
 
     <a-scene
         mindar-image="imageTargetSrc: ./targets.mind; warmupTolerance: 3; missTolerance: 10; filterMinCF: 0.001; filterBeta: 1000;"
@@ -102,6 +104,8 @@
 
         const target = document.querySelector("#myTarget");
 
+        const button = document.querySelector("#startButton");
+
         const status = document.querySelector("#status");
 
         let videoReady = false;
@@ -129,12 +133,30 @@
         });
 
 
-        // AUTO CHECK (no button): runs as soon as the video has loaded
+        // Runs as soon as the video has loaded: warns if the picture can't be decoded
         video.addEventListener("loadedmetadata", function() {
             if (video.videoWidth === 0) {
                 status.textContent = "VIDEO CODEC NOT SUPPORTED - re-encode as H.264 8-bit";
-            } else {
-                status.textContent = "[v5] Looking for image... Video OK " + video.videoWidth + "x" + video.videoHeight;
+            } else if (button.style.display !== "none") {
+                status.textContent = "[v6] Press START AR - Video OK " + video.videoWidth + "x" + video.videoHeight;
+            }
+        });
+
+
+        // START AR BUTTON - one tap at the beginning. This tap is what lets Chrome play SOUND later.
+        // After it, everything is automatic (play when image found, pause when lost).
+        button.addEventListener("click", async function() {
+            button.style.display = "none";
+            status.textContent = "Looking for image...";
+
+            try {
+                video.muted = true;
+                await video.play();      // unlock the video with the user's tap
+                video.pause();           // wait for the image before really playing
+                video.currentTime = 0;
+                video.muted = false;     // allowed now: sound will be on when the image is found
+            } catch (error) {
+                console.error("INITIALIZATION ERROR:", error);
             }
         });
 
