@@ -69,6 +69,7 @@
                 muted
                 playsinline
                 webkit-playsinline
+                crossorigin="anonymous"
                 loop>
             </video>
 
@@ -149,7 +150,18 @@
 
                 button.style.display = "none";
 
-                status.textContent = "Camera starting... Looking for image.";
+                // DIAGNOSTIC: videoWidth = 0 means the phone can play the audio but CANNOT decode the video picture
+                // (typical for H.265/HEVC or 10-bit exports) -> black screen with no error.
+                if (video.videoWidth === 0) {
+                    status.textContent = "VIDEO CODEC NOT SUPPORTED - re-encode as H.264 8-bit";
+                } else {
+                    status.textContent = "Camera starting... Video OK " + video.videoWidth + "x" + video.videoHeight;
+                }
+
+                // Video is now unlocked by the tap. Stop it so it doesn't play (with sound)
+                // before the image is found; targetFound will start it from the beginning.
+                video.pause();
+                video.currentTime = 0;
 
                 console.log("Video initialized successfully");
 
@@ -204,9 +216,17 @@
 
                 video.currentTime = 0;
 
-                await video.play();
+                // Turn sound on (allowed because the user already tapped START AR).
+                // If the browser refuses, fall back to muted so the video still plays.
+                video.muted = false;
+                try {
+                    await video.play();
+                } catch (e) {
+                    video.muted = true;
+                    await video.play();
+                }
 
-                console.log("VIDEO PLAYBACK STARTED");
+                console.log("VIDEO PLAYBACK STARTED, muted:", video.muted);
 
                 console.log("Video dimensions:",
                     video.videoWidth,
@@ -217,7 +237,9 @@
 
                 console.log("Video paused:", video.paused);
 
-                status.textContent = "Video playing!";
+                status.textContent = video.videoWidth === 0
+                    ? "VIDEO CODEC NOT SUPPORTED - re-encode as H.264 8-bit"
+                    : "Video playing! " + video.videoWidth + "x" + video.videoHeight;
 
             }
 
