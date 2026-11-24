@@ -1,40 +1,196 @@
-<html>
-  <head>
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <script src="https://aframe.io/releases/1.5.0/aframe.min.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/mind-ar@1.2.5/dist/mindar-image-aframe.prod.js"></script>
-  </head>
-  <body>
-    <a-scene 
-      mindar-image="imageTargetSrc: ./targets.mind;" 
-      color-space="sRGB" 
-      renderer="colorManagement: true, physicallyCorrectLights" 
-      vr-mode-ui="enabled: false" 
-      device-orientation-permission-ui="enabled: false">
-      
-      <a-assets>
-        <video id="myVideo" src="./video.mp4" loop="true" muted></video>
-      </a-assets>
+<!DOCTYPE html>
+<html lang="en">
 
-      <a-camera position="0 0 0" look-controls="enabled: false"></a-camera>
+<head>
 
-      <a-entity mindar-image-target="targetIndex: 0">
-        <!-- ویدیو روی عکس -->
-        <a-video 
-          src="#myVideo" 
-          position="0 0 0" 
-          width="1" 
-          height="0.5625" 
-          rotation="0 0 0">
+<meta charset="UTF-8">
+
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
+
+<title>Ghasr Negar AR</title>
+
+<script src="https://aframe.io/releases/1.5.0/aframe.min.js"></script>
+
+<script src="https://cdn.jsdelivr.net/npm/mind-ar@1.2.5/dist/mindar-image-aframe.prod.js"></script>
+
+<style>
+
+body {
+    margin: 0;
+    overflow: hidden;
+    font-family: Arial, sans-serif;
+}
+
+#startButton {
+    position: fixed;
+    z-index: 9999;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    padding: 18px 35px;
+    font-size: 18px;
+    border: none;
+    border-radius: 12px;
+    background: black;
+    color: white;
+}
+
+#status {
+    position: fixed;
+    z-index: 9999;
+    bottom: 30px;
+    width: 100%;
+    text-align: center;
+    color: white;
+    font-size: 16px;
+    pointer-events: none;
+}
+
+</style>
+
+</head>
+
+<body>
+
+<button id="startButton">START AR</button>
+
+<div id="status">Press START AR</div>
+
+<a-scene
+    mindar-image="imageTargetSrc: ./targets.mind;"
+    color-space="sRGB"
+    renderer="colorManagement: true, physicallyCorrectLights"
+    vr-mode-ui="enabled: false"
+    device-orientation-permission-ui="enabled: false">
+
+    <a-assets>
+
+        <video
+            id="myVideo"
+            src="./video.mp4"
+            preload="auto"
+            muted
+            playsinline
+            webkit-playsinline
+            loop>
+        </video>
+
+    </a-assets>
+
+    <a-camera
+        position="0 0 0"
+        look-controls="enabled: false">
+    </a-camera>
+
+    <a-entity
+        id="myTarget"
+        mindar-image-target="targetIndex: 0">
+
+        <a-video
+            src="#myVideo"
+            position="0 0 0"
+            width="1"
+            height="0.5625"
+            rotation="0 0 0">
         </a-video>
-      </a-entity>
-    </a-scene>
 
-    <script>
-      // وقتی عکس پیدا شد، ویدیو را پخش کن
-      document.querySelector('a-entity').addEventListener('targetFound', function() {
-        document.querySelector('#myVideo').play();
-      });
-    </script>
-  </body>
+    </a-entity>
+
+</a-scene>
+
+<script>
+
+const video = document.querySelector("#myVideo");
+
+const target = document.querySelector("#myTarget");
+
+const button = document.querySelector("#startButton");
+
+const status = document.querySelector("#status");
+
+let targetVisible = false;
+
+
+// Enable video playback through user interaction
+
+button.addEventListener("click", function() {
+
+    video.play().then(() => {
+
+        video.pause();
+
+        video.currentTime = 0;
+
+        button.style.display = "none";
+
+        status.textContent = "Camera starting...";
+
+    }).catch(error => {
+
+        status.textContent = "Video permission error. Please try again.";
+
+        console.error("Video error:", error);
+
+    });
+
+});
+
+
+// Image detected
+
+target.addEventListener("targetFound", function() {
+
+    targetVisible = true;
+
+    status.textContent = "Image detected! Playing video...";
+
+    video.play().catch(error => {
+
+        status.textContent = "Tap START AR again to enable video.";
+
+        button.style.display = "block";
+
+        console.error("Playback failed:", error);
+
+    });
+
+});
+
+
+// Image lost
+
+target.addEventListener("targetLost", function() {
+
+    targetVisible = false;
+
+    video.pause();
+
+    status.textContent = "Looking for image...";
+
+});
+
+
+// Video error handling
+
+video.addEventListener("error", function() {
+
+    console.error("Video loading failed:", video.error);
+
+    status.textContent = "Unable to load video.";
+
+});
+
+
+// AR camera errors
+
+document.querySelector("a-scene").addEventListener("arError", function() {
+
+    status.textContent = "Camera error. Check camera permissions.";
+
+});
+
+</script>
+
+</body>
+
 </html>
