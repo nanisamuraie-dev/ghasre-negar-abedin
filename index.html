@@ -115,6 +115,18 @@
                 "imageTargetSrc: ./targets.mind; warmupTolerance: " + t.warmupTolerance +
                 "; missTolerance: " + t.missTolerance + "; filterMinCF: " + t.filterMinCF +
                 "; filterBeta: " + t.filterBeta + ";");
+
+            // DIAGNOSTICS (add to the link):
+            //   ?stats      shows an FPS counter (low FPS = phone is too slow = lag + shake)
+            //   ?nov        shows a plain RED plane instead of the video (tests tracking without the video load)
+            var scene = document.querySelector("a-scene");
+            if (q.has("stats")) scene.setAttribute("stats", "true");
+            window.noVideo = q.has("nov");
+            if (window.noVideo) {
+                var av = document.querySelector("#arVideo");
+                av.removeAttribute("src");
+                av.setAttribute("material", "shader: flat; color: #ff0044; side: double");
+            }
         })();
     </script>
 
@@ -159,7 +171,7 @@
             if (video.videoWidth === 0) {
                 status.textContent = "VIDEO CODEC NOT SUPPORTED - re-encode as H.264 8-bit";
             } else if (button.style.display !== "none") {
-                status.textContent = "[v8] Press START AR - Video OK " + video.videoWidth + "x" + video.videoHeight
+                status.textContent = "[v9] Press START AR - Video OK " + video.videoWidth + "x" + video.videoHeight
                     + " | cf " + window.tune.filterMinCF + " beta " + window.tune.filterBeta;
             }
         });
@@ -211,6 +223,8 @@
             status.textContent = "Image detected! Playing video...";
 
             console.log("TARGET FOUND");
+
+            if (window.noVideo) { status.textContent = "NO-VIDEO TEST: red plane"; return; }
 
 
             try {
