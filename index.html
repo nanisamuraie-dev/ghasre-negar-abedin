@@ -33,18 +33,27 @@
         //  - tiny movements (tracking noise when the phone is still) -> heavily smoothed = no shaking
         //  - big movements (you really move the phone) -> follows fast = little lag
         // ------------------------------------------------------------------
+        // v11: 3 stages
+        //  1) pre-filter: averages the raw tracking pose (cuts the noise in half)
+        //  2) DEAD ZONE: if the change is smaller than the dead zone -> the video stays LOCKED (no shake)
+        //  3) adaptive follow: the bigger the real movement, the faster it follows
         AFRAME.registerComponent("smooth-follow", {
             schema: {
                 target:   { type: "selector" },
-                minAlpha: { default: 0.12 },   // smoothing when still (lower = calmer, more lag)
-                range:    { default: 0.04 },   // movement (in "image widths") that counts as a real move
-                rotRange: { default: 0.12 }    // rotation (radians) that counts as a real move
+                minAlpha: { default: 0.12 },   // follow speed for a medium move
+                still:    { default: 0.015 },  // very slow drift inside the dead zone (corrects tiny offsets invisibly)
+                dead:     { default: 1 },      // dead-zone size multiplier (2 = bigger lock, 0 = off)
+                range:    { default: 0.05 },   // movement (in "image widths") that counts as a full move
+                rotRange: { default: 0.15 }    // rotation (radians) that counts as a full move
             },
 
             init: function () {
                 this.p = new THREE.Vector3();
                 this.q = new THREE.Quaternion();
                 this.s = new THREE.Vector3();
+                this.gp = new THREE.Vector3();     // pre-filtered goal
+                this.gq = new THREE.Quaternion();
+                this.gs = new THREE.Vector3();
                 this.first = true;
                 this.el.object3D.visible = false;
             },
@@ -68,25 +77,43 @@
                     o.position.copy(this.p);
                     o.quaternion.copy(this.q);
                     o.scale.copy(this.s);
+                    this.gp.copy(this.p); this.gq.copy(this.q); this.gs.copy(this.s);
                     o.visible = true;
                     this.first = false;
                     return;
                 }
 
-                // how big is the change? (position measured relative to the image size)
-                var size = Math.max(this.s.x, 1e-6);
-                var move = o.position.distanceTo(this.p) / size;
-                var turn = o.quaternion.angleTo(this.q);
-                var amount = Math.min(1, Math.max(move / d.range, turn / d.rotRange));
+                var f = Math.min(dt || 16.7, 100) / 16.7;          // same result on 30fps and 60fps phones
+                function rate(a) { return 1 - Math.pow(1 - a, f); }
 
-                // small change -> minAlpha, big change -> 1 (follow immediately)
-                var alpha = d.minAlpha + (1 - d.minAlpha) * amount * amount;
-                // make it the same on 30fps and 60fps phones
-                var k = 1 - Math.pow(1 - alpha, Math.min(dt || 16.7, 100) / 16.7);
+                // 1) pre-filter the raw pose
+                var pre = rate(0.5);
+                this.gp.lerp(this.p, pre);
+                this.gq.slerp(this.q, pre);
+                this.gs.lerp(this.s, pre);
 
-                o.position.lerp(this.p, k);
-                o.quaternion.slerp(this.q, k);
-                o.scale.lerp(this.s, k);
+                // how far is the video from the goal? (position relative to the image size)
+                var size = Math.max(this.gs.x, 1e-6);
+                var move = o.position.distanceTo(this.gp) / size;
+                var turn = o.quaternion.angleTo(this.gq);
+                var sc   = o.scale.x / size - 1;
+
+                // 2) dead zone: 0.6% of the image width / ~0.7 degrees / 0.6% size
+                var dz = d.dead;
+                var exPos  = Math.max(0, move - 0.006 * dz) / d.range;
+                var exRot  = Math.max(0, turn - 0.012 * dz) / d.rotRange;
+                var exSc   = Math.max(0, Math.abs(sc) - 0.006 * dz) / d.range;
+                var amount = Math.min(1, Math.max(exPos, exRot, exSc));
+
+                // 3) inside the dead zone -> almost frozen; real move -> follows, faster for bigger moves
+                var alpha = amount === 0
+                    ? d.still
+                    : d.minAlpha * Math.sqrt(amount) + (1 - d.minAlpha) * amount * amount;
+                var k = rate(Math.max(alpha, d.still));
+
+                o.position.lerp(this.gp, k);
+                o.quaternion.slerp(this.gq, k);
+                o.scale.lerp(this.gs, k);
                 o.visible = true;
             }
         });
@@ -99,7 +126,7 @@
     <div id="status">Press START AR</div>
 
     <a-scene
-        mindar-image="imageTargetSrc: ./targets.mind; warmupTolerance: 3; missTolerance: 10; filterMinCF: 0.0001; filterBeta: 10;"
+        mindar-image="imageTargetSrc: ./targets.mind; warmupTolerance: 3; missTolerance: 10; filterMinCF: 0.0001; filterBeta: 5;"
         color-space="sRGB"
         renderer="colorManagement: true"
         vr-mode-ui="enabled: false"
@@ -141,12 +168,13 @@
         //   cf     = filterMinCF      (lower = less jitter)              default 0.0001
         //   beta   = filterBeta       (LOWER = less shake, higher = less lag)  default 10
         //   smooth = extra smoothing  (lower = calmer, e.g. 0.06 ; higher = faster, e.g. 0.3)  default 0.12
+        //   dead   = dead-zone size (1 = default, 2 = locks harder when still, 0 = off)
         //   raw    = turn the extra smoothing OFF (to compare)
         //   miss = missTolerance, warm = warmupTolerance
-        window.tune = { warmupTolerance: 3, missTolerance: 10, filterMinCF: 0.0001, filterBeta: 10, smooth: 0.12, raw: false };
+        window.tune = { warmupTolerance: 3, missTolerance: 10, filterMinCF: 0.0001, filterBeta: 5, smooth: 0.12, dead: 1, raw: false };
         (function () {
             var q = new URLSearchParams(location.search);
-            var map = { cf: "filterMinCF", beta: "filterBeta", miss: "missTolerance", warm: "warmupTolerance", smooth: "smooth" };
+            var map = { cf: "filterMinCF", beta: "filterBeta", miss: "missTolerance", warm: "warmupTolerance", smooth: "smooth", dead: "dead" };
             Object.keys(map).forEach(function (k) {
                 if (q.has(k) && !isNaN(parseFloat(q.get(k)))) window.tune[map[k]] = parseFloat(q.get(k));
             });
@@ -158,7 +186,7 @@
                 "imageTargetSrc: ./targets.mind; warmupTolerance: " + t.warmupTolerance +
                 "; missTolerance: " + t.missTolerance + "; filterMinCF: " + t.filterMinCF +
                 "; filterBeta: " + t.filterBeta + ";");
-            document.querySelector("#videoHolder").setAttribute("smooth-follow", "minAlpha", t.smooth);
+            document.querySelector("#videoHolder").setAttribute("smooth-follow", { minAlpha: t.smooth, dead: t.dead });
 
             // DIAGNOSTICS:  ?stats = FPS counter   ?nov = red plane instead of the video
             if (q.has("stats")) scene.setAttribute("stats", "true");
@@ -182,7 +210,7 @@
 
         function tuneText() {
             var t = window.tune;
-            return " | cf " + t.filterMinCF + " beta " + t.filterBeta + " smooth " + (t.raw ? "OFF" : t.smooth);
+            return " | cf " + t.filterMinCF + " beta " + t.filterBeta + " smooth " + (t.raw ? "OFF" : t.smooth + " dead " + t.dead);
         }
 
         // ---------------- VIDEO LOADING ----------------
@@ -195,7 +223,7 @@
             if (video.videoWidth === 0) {
                 status.textContent = "VIDEO CODEC NOT SUPPORTED - re-encode as H.264 8-bit";
             } else if (button.style.display !== "none") {
-                status.textContent = "[v10] Press START AR - Video OK " + video.videoWidth + "x" + video.videoHeight + tuneText();
+                status.textContent = "[v11] Press START AR - Video OK " + video.videoWidth + "x" + video.videoHeight + tuneText();
             }
         });
 
@@ -268,7 +296,7 @@
 
                 status.textContent = video.videoWidth === 0
                     ? "VIDEO CODEC NOT SUPPORTED - re-encode as H.264 8-bit"
-                    : "[v10] Playing " + video.videoWidth + "x" + video.videoHeight
+                    : "[v11] Playing " + video.videoWidth + "x" + video.videoHeight
                       + " | sound: " + (video.muted ? "OFF - tap screen" : "ON") + tuneText();
 
                 setTimeout(checkAudioTrack, 2000);
