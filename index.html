@@ -3,87 +3,127 @@
 
 <head>
     <meta charset="UTF-8">
-
-    <meta name="viewport"
-          content="width=device-width, initial-scale=1, maximum-scale=1">
-
+    <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
     <title>Ghasr Negar AR</title>
 
     <script src="https://aframe.io/releases/1.5.0/aframe.min.js"></script>
-
     <script src="https://cdn.jsdelivr.net/npm/mind-ar@1.2.5/dist/mindar-image-aframe.prod.js"></script>
 
     <style>
-        body {
-            margin: 0;
-            overflow: hidden;
-            font-family: Arial, sans-serif;
-        }
+        body { margin: 0; overflow: hidden; font-family: Arial, sans-serif; }
 
         #startButton {
-            position: fixed;
-            z-index: 9999;
-            top: 50%;
-            left: 50%;
+            position: fixed; z-index: 9999; top: 50%; left: 50%;
             transform: translate(-50%, -50%);
-            padding: 18px 35px;
-            font-size: 18px;
-            border: none;
-            border-radius: 12px;
-            background: black;
-            color: white;
+            padding: 18px 35px; font-size: 18px; border: none; border-radius: 12px;
+            background: black; color: white;
         }
 
         #status {
-            position: fixed;
-            z-index: 9999;
-            bottom: 30px;
-            width: 100%;
-            text-align: center;
-            color: white;
-            font-size: 16px;
-            pointer-events: none;
+            position: fixed; z-index: 9999; bottom: 30px; width: 100%;
+            text-align: center; color: white; font-size: 16px;
+            text-shadow: 0 0 4px black; pointer-events: none;
         }
     </style>
+
+    <script>
+        // ------------------------------------------------------------------
+        // SMOOTH-FOLLOW: an extra anti-shake layer on top of MindAR's own filter.
+        // The video no longer sits directly on the tracked image; it FOLLOWS it.
+        //  - tiny movements (tracking noise when the phone is still) -> heavily smoothed = no shaking
+        //  - big movements (you really move the phone) -> follows fast = little lag
+        // ------------------------------------------------------------------
+        AFRAME.registerComponent("smooth-follow", {
+            schema: {
+                target:   { type: "selector" },
+                minAlpha: { default: 0.12 },   // smoothing when still (lower = calmer, more lag)
+                range:    { default: 0.04 },   // movement (in "image widths") that counts as a real move
+                rotRange: { default: 0.12 }    // rotation (radians) that counts as a real move
+            },
+
+            init: function () {
+                this.p = new THREE.Vector3();
+                this.q = new THREE.Quaternion();
+                this.s = new THREE.Vector3();
+                this.first = true;
+                this.el.object3D.visible = false;
+            },
+
+            tick: function (time, dt) {
+                var d = this.data;
+                if (!d.target) return;
+                var tg = d.target.object3D;
+                var o = this.el.object3D;
+
+                if (!tg.visible) {                 // image lost -> hide, snap on next find
+                    o.visible = false;
+                    this.first = true;
+                    return;
+                }
+
+                tg.updateWorldMatrix(true, false);
+                tg.matrixWorld.decompose(this.p, this.q, this.s);
+
+                if (this.first || window.tune.raw) {   // first frame (or ?raw) -> jump straight there
+                    o.position.copy(this.p);
+                    o.quaternion.copy(this.q);
+                    o.scale.copy(this.s);
+                    o.visible = true;
+                    this.first = false;
+                    return;
+                }
+
+                // how big is the change? (position measured relative to the image size)
+                var size = Math.max(this.s.x, 1e-6);
+                var move = o.position.distanceTo(this.p) / size;
+                var turn = o.quaternion.angleTo(this.q);
+                var amount = Math.min(1, Math.max(move / d.range, turn / d.rotRange));
+
+                // small change -> minAlpha, big change -> 1 (follow immediately)
+                var alpha = d.minAlpha + (1 - d.minAlpha) * amount * amount;
+                // make it the same on 30fps and 60fps phones
+                var k = 1 - Math.pow(1 - alpha, Math.min(dt || 16.7, 100) / 16.7);
+
+                o.position.lerp(this.p, k);
+                o.quaternion.slerp(this.q, k);
+                o.scale.lerp(this.s, k);
+                o.visible = true;
+            }
+        });
+    </script>
 </head>
 
 <body>
 
     <button id="startButton">START AR</button>
-
     <div id="status">Press START AR</div>
 
     <a-scene
-        mindar-image="imageTargetSrc: ./targets.mind; warmupTolerance: 3; missTolerance: 10; filterMinCF: 0.0003; filterBeta: 3000;"
+        mindar-image="imageTargetSrc: ./targets.mind; warmupTolerance: 3; missTolerance: 10; filterMinCF: 0.0001; filterBeta: 10;"
         color-space="sRGB"
         renderer="colorManagement: true"
         vr-mode-ui="enabled: false"
         device-orientation-permission-ui="enabled: false">
 
         <a-assets timeout="15000">
-
             <video
                 id="myVideo"
                 src="./video.mp4"
                 preload="auto"
-                muted
                 playsinline
                 webkit-playsinline
                 crossorigin="anonymous"
                 loop>
             </video>
-
         </a-assets>
 
-        <a-camera
-            position="0 0 0"
-            look-controls="enabled: false">
-        </a-camera>
+        <a-camera position="0 0 0" look-controls="enabled: false"></a-camera>
 
-        <a-entity
-            id="myTarget"
-            mindar-image-target="targetIndex: 0">
+        <!-- The tracked image (invisible anchor only) -->
+        <a-entity id="myTarget" mindar-image-target="targetIndex: 0"></a-entity>
 
+        <!-- The video FOLLOWS the anchor smoothly (it is no longer a child of it) -->
+        <a-entity id="videoHolder" smooth-follow="target: #myTarget">
             <a-video
                 id="arVideo"
                 src="#myVideo"
@@ -92,34 +132,35 @@
                 width="1"
                 height="0.5625">
             </a-video>
-
         </a-entity>
 
     </a-scene>
 
     <script>
-        // LIVE TUNING: add values to the link to test them without editing the file, e.g.
-        //   https://.../ghasre-negar-abedin/?cf=0.0005&beta=3000
-        //   cf   = filterMinCF  (lower = less jitter)
-        //   beta = filterBeta   (higher = less lag when moving)
+        // LIVE TUNING (add to the link, no file editing needed), e.g.  ?beta=5&smooth=0.08
+        //   cf     = filterMinCF      (lower = less jitter)              default 0.0001
+        //   beta   = filterBeta       (LOWER = less shake, higher = less lag)  default 10
+        //   smooth = extra smoothing  (lower = calmer, e.g. 0.06 ; higher = faster, e.g. 0.3)  default 0.12
+        //   raw    = turn the extra smoothing OFF (to compare)
         //   miss = missTolerance, warm = warmupTolerance
-        window.tune = { warmupTolerance: 3, missTolerance: 10, filterMinCF: 0.0003, filterBeta: 3000 };
+        window.tune = { warmupTolerance: 3, missTolerance: 10, filterMinCF: 0.0001, filterBeta: 10, smooth: 0.12, raw: false };
         (function () {
             var q = new URLSearchParams(location.search);
-            var map = { cf: "filterMinCF", beta: "filterBeta", miss: "missTolerance", warm: "warmupTolerance" };
+            var map = { cf: "filterMinCF", beta: "filterBeta", miss: "missTolerance", warm: "warmupTolerance", smooth: "smooth" };
             Object.keys(map).forEach(function (k) {
                 if (q.has(k) && !isNaN(parseFloat(q.get(k)))) window.tune[map[k]] = parseFloat(q.get(k));
             });
+            window.tune.raw = q.has("raw");
             var t = window.tune;
-            document.querySelector("a-scene").setAttribute("mindar-image",
+
+            var scene = document.querySelector("a-scene");
+            scene.setAttribute("mindar-image",
                 "imageTargetSrc: ./targets.mind; warmupTolerance: " + t.warmupTolerance +
                 "; missTolerance: " + t.missTolerance + "; filterMinCF: " + t.filterMinCF +
                 "; filterBeta: " + t.filterBeta + ";");
+            document.querySelector("#videoHolder").setAttribute("smooth-follow", "minAlpha", t.smooth);
 
-            // DIAGNOSTICS (add to the link):
-            //   ?stats      shows an FPS counter (low FPS = phone is too slow = lag + shake)
-            //   ?nov        shows a plain RED plane instead of the video (tests tracking without the video load)
-            var scene = document.querySelector("a-scene");
+            // DIAGNOSTICS:  ?stats = FPS counter   ?nov = red plane instead of the video
             if (q.has("stats")) scene.setAttribute("stats", "true");
             window.noVideo = q.has("nov");
             if (window.noVideo) {
@@ -130,191 +171,140 @@
         })();
     </script>
 
-
     <script>
-
-        const video = document.querySelector("#myVideo");
-
+        const video  = document.querySelector("#myVideo");
         const target = document.querySelector("#myTarget");
-
         const button = document.querySelector("#startButton");
-
         const status = document.querySelector("#status");
 
-        let videoReady = false;
-
         let targetVisible = false;
+        let audioChecked = false;
 
+        function tuneText() {
+            var t = window.tune;
+            return " | cf " + t.filterMinCF + " beta " + t.filterBeta + " smooth " + (t.raw ? "OFF" : t.smooth);
+        }
 
-        // VIDEO LOADING
-
-        video.addEventListener("loadeddata", function() {
-
-            videoReady = true;
-
-            console.log("Video loaded successfully");
-
-        });
-
-
-        video.addEventListener("error", function() {
-
+        // ---------------- VIDEO LOADING ----------------
+        video.addEventListener("error", function () {
             console.error("VIDEO ERROR:", video.error);
-
             status.textContent = "Video loading failed.";
-
         });
 
-
-        // Runs as soon as the video has loaded: warns if the picture can't be decoded
-        video.addEventListener("loadedmetadata", function() {
+        video.addEventListener("loadedmetadata", function () {
             if (video.videoWidth === 0) {
                 status.textContent = "VIDEO CODEC NOT SUPPORTED - re-encode as H.264 8-bit";
             } else if (button.style.display !== "none") {
-                status.textContent = "[v9] Press START AR - Video OK " + video.videoWidth + "x" + video.videoHeight
-                    + " | cf " + window.tune.filterMinCF + " beta " + window.tune.filterBeta;
+                status.textContent = "[v10] Press START AR - Video OK " + video.videoWidth + "x" + video.videoHeight + tuneText();
             }
         });
 
+        async function waitForVideo() {
+            if (video.readyState >= 2) return;
+            await new Promise((resolve, reject) => {
+                video.addEventListener("loadeddata", resolve, { once: true });
+                video.addEventListener("error", reject, { once: true });
+            });
+        }
 
-        // START AR BUTTON - one tap at the beginning. This tap is what lets Chrome play SOUND later.
-        // After it, everything is automatic (play when image found, pause when lost).
-        button.addEventListener("click", async function() {
+        // ---------------- SOUND CHECK ----------------
+        // 2 seconds after playback starts, check if the file really contains decodable audio.
+        function checkAudioTrack() {
+            if (audioChecked || video.paused) return;
+            audioChecked = true;
+            var has = null;
+            if (typeof video.webkitAudioDecodedByteCount === "number") has = video.webkitAudioDecodedByteCount > 0; // Chrome / Safari
+            else if (typeof video.mozHasAudio === "boolean") has = video.mozHasAudio;                             // Firefox
+            else if (video.audioTracks) has = video.audioTracks.length > 0;
+            console.log("Audio track present:", has);
+            if (has === false) {
+                status.textContent = "NO SOUND IN video.mp4 - re-export with AAC audio";
+            }
+        }
+
+        // ---------------- START BUTTON ----------------
+        // The tap PLAYS THE VIDEO WITH SOUND (not muted) for a moment.
+        // That is what unlocks sound for later (on Android AND iPhone).
+        // The old version played it MUTED here, which does not unlock sound everywhere.
+        button.addEventListener("click", function () {
             button.style.display = "none";
             status.textContent = "Looking for image...";
 
-            try {
-                video.muted = true;
-                await video.play();      // unlock the video with the user's tap
-                video.pause();           // wait for the image before really playing
-                video.currentTime = 0;
-                video.muted = false;     // allowed now: sound will be on when the image is found
-            } catch (error) {
-                console.error("INITIALIZATION ERROR:", error);
+            video.muted = false;
+            video.volume = 1;
+            const p = video.play();                 // must be called directly inside the tap
+            if (p) {
+                p.then(function () {
+                    if (!targetVisible) {           // image not in view yet -> wait for it
+                        video.pause();
+                        video.currentTime = 0;
+                    }
+                }).catch(function (e) {
+                    console.error("UNLOCK ERROR:", e);
+                });
             }
         });
 
-
-        // WAIT FOR VIDEO TO BE READY
-
-        async function waitForVideo() {
-
-            if (video.readyState >= 2) {
-                return;
-            }
-
-            await new Promise((resolve, reject) => {
-
-                video.addEventListener("loadeddata", resolve, {once: true});
-
-                video.addEventListener("error", reject, {once: true});
-
-            });
-
-        }
-
-
-        // IMAGE DETECTED
-
-        target.addEventListener("targetFound", async function() {
-
+        // ---------------- IMAGE FOUND ----------------
+        target.addEventListener("targetFound", async function () {
             targetVisible = true;
-
             status.textContent = "Image detected! Playing video...";
-
-            console.log("TARGET FOUND");
-
             if (window.noVideo) { status.textContent = "NO-VIDEO TEST: red plane"; return; }
 
-
             try {
-
                 await waitForVideo();
-
                 if (!targetVisible) return;
 
-                // NOTE: no "currentTime = 0" here on purpose, so the video RESUMES
-                // from where it stopped when the image comes back into view.
-
-                // Try to play WITH sound. Chrome only allows that after the person has tapped the page once.
-                // If it refuses, play muted automatically; the first tap anywhere then turns the sound on.
+                // resume from where it stopped (no currentTime = 0 on purpose)
                 video.muted = false;
+                video.volume = 1;
                 try {
                     await video.play();
                 } catch (e) {
+                    // browser refused sound (no tap yet) -> play muted; next tap turns sound on
                     video.muted = true;
                     await video.play();
                 }
 
-                console.log("VIDEO PLAYBACK STARTED, muted:", video.muted);
-
-                console.log("Video dimensions:",
-                    video.videoWidth,
-                    video.videoHeight
-                );
-
-                console.log("Video ready state:", video.readyState);
-
-                console.log("Video paused:", video.paused);
-
                 status.textContent = video.videoWidth === 0
                     ? "VIDEO CODEC NOT SUPPORTED - re-encode as H.264 8-bit"
-                    : "Video playing! " + video.videoWidth + "x" + video.videoHeight
-                      + " | sound: " + (video.muted ? "OFF - tap screen" : "ON")
-                      + " | vol " + video.volume;
+                    : "[v10] Playing " + video.videoWidth + "x" + video.videoHeight
+                      + " | sound: " + (video.muted ? "OFF - tap screen" : "ON") + tuneText();
 
-            }
-
-            catch(error) {
-
+                setTimeout(checkAudioTrack, 2000);
+            } catch (error) {
                 console.error("PLAYBACK ERROR:", error);
-
                 status.textContent = "Unable to play video.";
-
             }
-
         });
 
-
-        // FALLBACK: any tap on the screen unmutes the video (a fresh user gesture always allows sound)
-        ["pointerup", "touchend", "click"].forEach(function(evt) {
-            document.addEventListener(evt, function() {
-                if (video.muted) {
-                    video.muted = false;
-                    video.volume = 1;
-                    console.log("Unmuted by tap");
-                }
-            });
+        // ---------------- ANY TAP = SOUND ON ----------------
+        function soundOnTap() {
+            if (video.muted || video.volume === 0) {
+                video.muted = false;
+                video.volume = 1;
+            }
+            // if the browser had paused it, start it again (only while the image is visible)
+            if (targetVisible && video.paused && !window.noVideo) {
+                video.play().catch(function () {});
+            }
+        }
+        ["pointerup", "touchend", "click"].forEach(function (evt) {
+            document.addEventListener(evt, soundOnTap);
         });
 
-
-        // IMAGE LOST
-
-        target.addEventListener("targetLost", function() {
-
+        // ---------------- IMAGE LOST ----------------
+        target.addEventListener("targetLost", function () {
             targetVisible = false;
-
             video.pause();
-
             status.textContent = "Looking for image...";
-
-            console.log("TARGET LOST");
-
         });
 
-
-        // CAMERA ERROR
-
-        document.querySelector("a-scene")
-            .addEventListener("arError", function(event) {
-
-                console.error("AR ERROR:", event);
-
-                status.textContent = "Camera error. Check permissions.";
-
-            });
-
-
+        // ---------------- CAMERA ERROR ----------------
+        document.querySelector("a-scene").addEventListener("arError", function (event) {
+            console.error("AR ERROR:", event);
+            status.textContent = "Camera error. Check permissions.";
+        });
     </script>
 
 </body>
